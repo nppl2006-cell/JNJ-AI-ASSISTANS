@@ -1,0 +1,185 @@
+# jnj_assistant.py
+import os
+import json
+from datetime import datetime
+from colorama import init, Fore, Style
+from openai import OpenAI
+
+init(autoreset=True)
+
+class JNJAssistant:
+    def __init__(self, api_key=None, model="gpt-4o-mini"):  # Updated default to a fast modern model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("Please set OPENAI_API_KEY environment variable or pass api_key")
+
+        self.client = OpenAI(api_key=self.api_key)
+        self.model = model
+        self.conversation_history = [
+            {"role": "system", "content": "You are J.N.J Assistant, a helpful, witty, and highly capable AI assistant created to rival the best chatbots. Be friendly, concise when possible, and always maintain context."}
+        ]
+        self.total_tokens = 0
+        self.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.streaming = False
+
+    def chat(self, user_input):
+        self.conversation_history.append({"role": "user", "content": user_input})
+
+        if self.streaming:
+            return self._stream_response()
+        else:
+            return self._normal_response()
+
+    def _normal_response(self):
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=self.conversation_history,
+            temperature=0.7,
+            max_tokens=1500
+        )
+        msg = response.choices[0].message
+        usage = response.usage.total_tokens if response.usage else 0
+        self.total_tokens += usage
+
+        self.conversation_history.append({"role": "assistant", "content": msg.content})
+        return msg.content, usage
+
+    def _stream_response(self):
+        print(Fore.GREEN + "J.N.J: ", end="", flush=True)
+        full_response = ""
+
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=self.conversation_history,
+            temperature=0.7,
+            max_tokens=1500,
+            stream=True
+        )
+
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                print(Fore.GREEN + content, end="", flush=True)
+                full_response += content
+
+        print()  # New line
+        self.conversation_history.append({"role": "assistant", "content": full_response})
+        return full_response, 0  # Token count not available in stream easily
+
+    def save_conversation(self, filename=None):
+        if not filename:
+            filename = f"jnj_conversation_{self.conversation_id}.json"
+
+        data = {
+            "id": self.conversation_id,
+            "model": self.model,
+            "total_tokens": self.total_tokens,
+            "timestamp": datetime.now().isoformat(),
+            "messages": self.conversation_history[1:]  # Exclude system prompt
+        }
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+        print(Fore.CYAN + f"Conversation saved as {filename}")
+
+    def clear(self):
+        self.conversation_history = [self.conversation_history[0]]
+        self.total_tokens = 0
+        print(Fore.YELLOW + "Conversation cleared!")
+
+    def stats(self):
+        user_count = len([m for m in self.conversation_history if m["role"] == "user"])
+        assistant_count = len([m for m in self.conversation_history if m["role"] == "assistant"])
+        print(Fore.CYAN + "\n" + "="*50)
+        print(Fore.CYAN + "J.N.J ASSISTANT STATS")
+        print(Fore.CYAN + "="*50)
+        print(Fore.WHITE + f"Model: {self.model}")
+        print(Fore.WHITE + f"Total tokens: {self.total_tokens}")
+        print(Fore.WHITE + f"Messages: {user_count} (you) + {assistant_count} (me)")
+        print(Fore.CYAN + "="*50)
+
+def main():
+    print(Fore.MAGENTA + r"""
+     ██╗███╗   ██╗ █████╗ 
+     ██║████╗  ██║██╔══██╗
+     ██║██╔██╗ ██║███████║
+██   ██║██║╚██╗██║██╔══██║
+╚█████╔╝██║ ╚████║██║  ██║
+ ╚════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝
+    """)
+    print(Fore.CYAN + "J.N.J Assistant v2.0 - Now with modern OpenAI SDK")
+    print(Fore.YELLOW + "Type /help for commands • /exit to quit\n")
+
+    try:
+        assistant = JNJAssistant()
+    except Exception as e:
+        print(Fore.RED + f"Error: {e}")
+        return
+
+    while True:
+        try:
+            user_input = input(Fore.BLUE + "You: ").strip()
+
+            if not user_input:
+                continue
+
+            if user_input.lower() in ["/exit", "/quit", "/q"]:
+                print(Fore.MAGENTA + "Goodbye! Thanks for chatting with J.N.J Assistant 👋")
+                if input(Fore.YELLOW + "Save conversation? (y/n): ").lower() == "y":
+                    assistant.save_conversation()
+                break
+
+            if user_input.lower() in ["/help", "/h"]:
+                print(Fore.YELLOW + """
+COMMANDS:
+/help or /h       → Show this help
+/clear or /c      → Clear conversation
+/save or /s       → Save chat to JSON
+/stats            → Show token & message stats
+/model <name>     → Change model (e.g. /model gpt-4o)
+/stream           → Toggle streaming mode
+/exit             → Quit
+                """)
+                continue
+
+            if user_input.lower() in ["/clear", "/c"]:
+                assistant.clear()
+                continue
+
+            if user_input.lower() in ["/save", "/s"]:
+                assistant.save_conversation()
+                continue
+
+            if user_input.lower() == "/stats":
+                assistant.stats()
+                continue
+
+            if user_input.lower().startswith("/model "):
+                new_model = user_input.split(" ", 1)[1]
+                assistant.model = new_model
+                print(Fore.GREEN + f"Model switched to: {new_model}")
+                continue
+
+            if user_input.lower() == "/stream":
+                assistant.streaming = not assistant.streaming
+                print(Fore.GREEN + f"Streaming: {'ON' if assistant.streaming else 'OFF'}")
+                continue
+
+            # Regular message
+            if assistant.streaming:
+                assistant.chat(user_input)
+            else:
+                response, tokens = assistant.chat(user_input)
+                print(Fore.GREEN + f"J.N.J: {response}")
+
+        except KeyboardInterrupt:
+            print("\nUse /exit to quit properly.")
+        except Exception as e:
+            print(Fore.RED + f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
+pip install openai colorama
+export OPENAI_API_KEY="sk-your-key-here"
+python jnj_assistant.py
